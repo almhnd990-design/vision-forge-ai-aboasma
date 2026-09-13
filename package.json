@@ -6,19 +6,28 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:production": "node scripts/verify-production.mjs",
+    "test:unit": "node --import ./scripts/alias-register.mjs ./scripts/verify-commercial.mjs",
+    "test:commercial": "node scripts/verify-commercial-e2e.mjs",
+    "test:all": "npm run typecheck && npm run lint && npm run test:unit && npm run test:production && npm run test:commercial",
+    "check:env": "node scripts/check-env.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/noto-sans-arabic": "^5.3.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.49.1",
     "lucide-react": "^0.468.0",
     "next": "15.5.24",
     "react": "19.1.7",
     "react-dom": "19.1.7",
+    "stripe": "^17.7.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
