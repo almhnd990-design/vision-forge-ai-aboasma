@@ -41,6 +41,7 @@ import {
   workspaceSchema,
 } from "@/lib/workspace";
 import { Brand, LanguageSwitch } from "./brand";
+import { AuthNotConfiguredBanner } from "./auth-banner";
 import { Modal } from "./modal";
 import { SnapshotForm } from "./snapshot-form";
 const sections = [
@@ -61,7 +62,18 @@ const navIcons = [
   Activity,
 ];
 const providers = ["Shopify", "Stripe", "Amazon", "Gmail"];
-export function Dashboard({ locale }: { locale: Locale }) {
+export type CloudState = {
+  configured: boolean;
+  signedIn: boolean;
+  email: string | null;
+};
+export function Dashboard({
+  locale,
+  cloud,
+}: {
+  locale: Locale;
+  cloud: CloudState;
+}) {
   const t = getDictionary(locale).dash;
   const [section, setSection] = useState<Section>("overview");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -386,6 +398,16 @@ export function Dashboard({ locale }: { locale: Locale }) {
             <strong>{t.local}</strong>
             <p>{t.localDetail}</p>
           </div>
+          <nav className="dash-nav" aria-label={locale === "ar" ? "إعدادات الحساب" : "Account"}>
+            <Link href={`/${locale}/connections`} className="sidebar-home">
+              <Unplug size={16} aria-hidden="true" />
+              {locale === "ar" ? "ربط المصادر" : "Connect providers"}
+            </Link>
+            <Link href={`/${locale}/settings`} className="sidebar-home">
+              <ShieldCheck size={16} aria-hidden="true" />
+              {locale === "ar" ? "إعدادات الحساب" : "Account settings"}
+            </Link>
+          </nav>
           <Link href={`/${locale}`} className="sidebar-home">
             <ArrowLeft size={16} className="direction-chevron" />
             {t.home}
@@ -413,12 +435,17 @@ export function Dashboard({ locale }: { locale: Locale }) {
               {t.local}
             </span>
             <LanguageSwitch locale={locale} dashboard />
-            <span className="user-avatar" aria-label={t.workspace}>
+            <Link
+              href={`/${locale}/settings`}
+              className="user-avatar"
+              aria-label={locale === "ar" ? "إعدادات الحساب" : "Account settings"}
+            >
               G
-            </span>
+            </Link>
           </div>
         </header>
         <main className="dashboard-content" id="dashboard-main">
+          {!cloud.configured && <AuthNotConfiguredBanner locale={locale} />}
           <div
             role="status"
             aria-live="polite"

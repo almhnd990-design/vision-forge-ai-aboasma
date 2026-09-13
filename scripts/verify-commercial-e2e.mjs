@@ -335,6 +335,108 @@ await withServer(async (base) => {
     if (privacy.status === 404) {
       skip("legal pages", "not implemented yet in this build");
     }
+    if (privacy.status === 200) {
+      const html = await privacy.text();
+      check(
+        html.includes("launch draft") || html.includes("مسودة إطلاق"),
+        "legal pages display their draft notice rather than reading as final",
+      );
+      check(
+        !/SOC 2|ISO 27001|PCI DSS compliant/i.test(html),
+        "legal pages make no certification claim",
+      );
+    }
+  }
+
+  // ---- account surfaces render in both languages -----------------------------------
+  for (const [path, locale, dir] of [
+    ["/en/sign-in", "en", "ltr"],
+    ["/ar/sign-in", "ar", "rtl"],
+    ["/en/sign-up", "en", "ltr"],
+    ["/ar/sign-up", "ar", "rtl"],
+    ["/en/onboarding", "en", "ltr"],
+    ["/ar/onboarding", "ar", "rtl"],
+    ["/en/settings", "en", "ltr"],
+    ["/ar/settings", "ar", "rtl"],
+    ["/en/connections", "en", "ltr"],
+    ["/ar/connections", "ar", "rtl"],
+  ]) {
+    const response = await fetch(base + path);
+    const html = await response.text();
+    check(response.status === 200, `${path}: responds 200`);
+    check(
+      html.includes(`lang="${locale}"`) && html.includes(`dir="${dir}"`),
+      `${path}: native language and direction`,
+    );
+    /*
+     * With no Supabase project configured these pages must explain the configuration
+     * requirement. They must never render a credential form that cannot possibly work.
+     */
+    if (!(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim()) {
+      check(
+        html.includes("not configured") || html.includes("غير مُهيَّأة") || html.includes("غير مهيأ"),
+        `${path}: states that accounts are not configured instead of pretending`,
+      );
+    } else {
+      skip(`${path} unconfigured notice`, "Supabase is configured in this environment");
+    }
+  }
+
+  // ---- connections surface must not offer actions it cannot perform ----------------
+  {
+    const html = await (await fetch(base + "/en/connections")).text();
+    if (!(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim()) {
+      /*
+       * Without accounts the provider list is intentionally not rendered at all: listing
+       * connectable providers to an anonymous visitor would imply a capability the
+       * deployment does not have. What matters is that no credential field is offered.
+       */
+      check(
+        html.includes("Accounts are not configured"),
+        "/en/connections: explains that accounts are not configured",
+      );
+      check(
+        html.includes("NEXT_PUBLIC_SUPABASE_URL") && html.includes("SUPABASE_SERVICE_ROLE_KEY"),
+        "/en/connections: names the missing variables",
+      );
+      check(
+        !html.includes('type="password"'),
+        "/en/connections: no credential field is rendered while nothing can be connected",
+      );
+      check(
+        !/Coming soon/i.test(html),
+        "/en/connections: no provider list is shown to an anonymous visitor",
+      );
+      skip(
+        "connections provider list (coming soon labels)",
+        "requires a signed-in account, which needs a Supabase project",
+      );
+    } else {
+      check(html.includes("Shopify") && html.includes("Gmail"), "/en/connections: providers are listed");
+      check(html.includes("Coming soon"), "/en/connections: unimplemented providers are labelled Coming soon");
+    }
+  }
+
+  // ---- the dashboard states its storage mode honestly ------------------------------
+  {
+    const html = await (await fetch(base + "/en/dashboard")).text();
+    check(html.includes("GhostOps"), "/en/dashboard: renders");
+    if (!(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim()) {
+      check(
+        html.includes("Accounts are not configured on this deployment"),
+        "/en/dashboard: announces that no account storage exists on this deployment",
+      );
+      check(
+        html.includes("locally in this browser only"),
+        "/en/dashboard: states that the workspace is browser-local",
+      );
+    } else {
+      skip("dashboard storage notice", "Supabase is configured in this environment");
+    }
+    check(
+      html.includes("/en/settings") && html.includes("/en/connections"),
+      "/en/dashboard: links to account settings and provider connections",
+    );
   }
 });
 

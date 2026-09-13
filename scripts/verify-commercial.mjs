@@ -27,6 +27,13 @@ import {
   entitlementState,
   resolveActivePlanId,
 } from "../lib/db/access.ts";
+import {
+  safeRedirectPath,
+  signUpSchema,
+  signInSchema,
+  describeAuthError,
+} from "../lib/auth/client.ts";
+import { LEGAL_DOC_KEYS, getLegalDoc } from "../lib/legal/content.ts";
 import { runDeterministicEngine, engineSignature, stableInsightId } from "../lib/agent/engine.ts";
 import { canTransition, ALLOWED_TRANSITIONS } from "../lib/agent/service.ts";
 import { validateAiOutput, resolveProvider, AI_UNAVAILABLE } from "../lib/ai/reason.ts";
@@ -388,6 +395,128 @@ check(
 check(
   isPlanPurchasable("starter", true) === true,
   "a plan becomes purchasable once billing is configured",
+);
+
+// ---------------------------------------------------------------------------
+// 10. Redirect safety (open-redirect defence)
+// ---------------------------------------------------------------------------
+
+const rejected = [
+  "https://evil.com",
+  "//evil.com",
+  "/\\evil.com",
+  "http://evil.com/en",
+  "/en\\@evil.com",
+  "/%2F%2Fevil.com",
+  "javascript:alert(1)",
+  "  ",
+  "",
+  null,
+  undefined,
+  "/en\u0000/settings",
+  "en/settings",
+  `/${"a".repeat(600)}`,
+];
+for (const value of rejected) {
+  check(safeRedirectPath(value) === null, `safeRedirectPath rejects ${JSON.stringify(value)}`);
+}
+const accepted = ["/en/settings", "/ar/dashboard", "/en/onboarding?step=2", "/"];
+for (const value of accepted) {
+  check(safeRedirectPath(value) === value, `safeRedirectPath accepts ${value}`);
+}
+
+// ---------------------------------------------------------------------------
+// 11. Authentication input rules
+// ---------------------------------------------------------------------------
+
+check(
+  signUpSchema.safeParse({
+    email: "owner@example.com",
+    password: "a-long-enough-password",
+    fullName: "Owner",
+    locale: "en",
+    acceptedTerms: true,
+  }).success,
+  "a valid sign-up payload is accepted",
+);
+check(
+  !signUpSchema.safeParse({
+    email: "owner@example.com",
+    password: "short",
+    fullName: "Owner",
+    locale: "en",
+    acceptedTerms: true,
+  }).success,
+  "a password under 10 characters is rejected",
+);
+check(
+  !signUpSchema.safeParse({
+    email: "not-an-email",
+    password: "a-long-enough-password",
+    fullName: "Owner",
+    locale: "en",
+    acceptedTerms: true,
+  }).success,
+  "an invalid email is rejected",
+);
+check(
+  !signUpSchema.safeParse({
+    email: "owner@example.com",
+    password: "a-long-enough-password",
+    fullName: "Owner",
+    locale: "en",
+    acceptedTerms: false,
+  }).success,
+  "sign-up requires explicit terms acceptance (it is not pre-ticked)",
+);
+check(
+  !signUpSchema.safeParse({ email: "owner@example.com", password: "a-long-enough-password" }).success,
+  "sign-up rejects a missing name and consent",
+);
+check(
+  !signInSchema.safeParse({ email: "owner@example.com", password: "" }).success,
+  "sign-in rejects an empty password",
+);
+
+check(
+  describeAuthError("Invalid login credentials", "en").includes("not correct"),
+  "auth errors are mapped to a controlled message instead of being echoed raw",
+);
+check(
+  describeAuthError("Invalid login credentials", "ar").length > 0,
+  "auth error messages are localized",
+);
+check(
+  describeAuthError("some internal provider failure", "en").length > 0,
+  "an unknown auth error still produces a safe generic message",
+);
+
+// ---------------------------------------------------------------------------
+// 12. Legal content integrity
+// ---------------------------------------------------------------------------
+
+check(LEGAL_DOC_KEYS.length === 5, "five legal documents are defined");
+for (const locale of ["en", "ar"]) {
+  for (const key of LEGAL_DOC_KEYS) {
+    const doc = getLegalDoc(locale, key);
+    check(
+      doc.title.length > 0 && doc.sections.length >= 3 && doc.draftNotice.length > 0,
+      `${locale}/${key}: has a title, at least three sections and a draft notice`,
+    );
+  }
+}
+const allLegalText = ["en", "ar"]
+  .flatMap((locale) => LEGAL_DOC_KEYS.map((key) => JSON.stringify(getLegalDoc(locale, key))))
+  .join(" ")
+  .toLowerCase();
+for (const forbidden of ["soc 2 certified", "iso 27001 certified", "pci dss compliant", "gdpr certified"]) {
+  check(!allLegalText.includes(forbidden), `legal pages make no unearned claim: "${forbidden}"`);
+}
+check(
+  allLegalText.includes("not implemented") ||
+    allLegalText.includes("no independent penetration test") ||
+    allLegalText.includes("not claim"),
+  "legal pages disclose that controls and audits are not certified",
 );
 
 const featureKeys = new Set(Object.keys(FEATURES));

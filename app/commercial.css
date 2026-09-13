@@ -509,6 +509,80 @@
   color: var(--muted);
 }
 
+/* ---------- auth-not-configured banner ---------- */
+
+.auth-banner {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  border: 1px solid color-mix(in srgb, var(--purple) 35%, var(--line));
+  background: color-mix(in srgb, var(--purple) 8%, transparent);
+  border-radius: 16px;
+  padding: 15px 18px;
+  margin-bottom: 20px;
+}
+
+.auth-banner > svg {
+  flex: none;
+  color: var(--purple);
+  margin-top: 3px;
+}
+
+.auth-banner strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.auth-banner p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.auth-banner code {
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin-inline-end: 4px;
+  display: inline-block;
+}
+
+.auth-banner .button {
+  margin-inline-start: auto;
+}
+
+/* ---------- loading affordance ---------- */
+
+.spin {
+  animation: ghostops-spin 0.9s linear infinite;
+}
+
+@keyframes ghostops-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+/* secondary navigation inside the dashboard sidebar */
+.dash-nav {
+  display: grid;
+  gap: 2px;
+  margin-block: 8px 4px;
+  padding-block: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
 @media (max-width: 760px) {
   .pricing-grid {
     grid-template-columns: 1fr;
