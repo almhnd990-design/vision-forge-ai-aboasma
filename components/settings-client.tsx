@@ -27,6 +27,7 @@ import {
   type DeleteState,
   type ExportState,
 } from "@/lib/actions/account";
+import { ScanScheduleCard } from "@/components/scan-schedule-card";
 
 export type ConnectionSummary = {
   providerKey: string;
@@ -59,6 +60,11 @@ export type SettingsView = {
   billingConfigured: boolean;
   missingBillingEnv: string[];
   authConfigured: boolean;
+  /**
+   * Comes from the central feature registry, not from a local assumption, so the UI cannot
+   * advertise scheduled scans while that feature is still marked as planned.
+   */
+  scheduledScansAvailable: boolean;
 };
 
 export function SettingsClient({ view }: { view: SettingsView }) {
@@ -375,9 +381,17 @@ export function SettingsClient({ view }: { view: SettingsView }) {
         </p>
       </section>
 
+      {/* Scheduled scans */}
+      {view.workspace && (
+        <ScanScheduleCard
+          locale={locale}
+          workspaceId={view.workspace.id}
+          scheduledScansAvailable={view.scheduledScansAvailable}
+        />
+      )}
+
       {/* Data rights */}
-      <section className="panel">
-        <div className="panel-heading">
+      <section className="panel">        <div className="panel-heading">
           <h2>{admin("data")}</h2>
         </div>
         {view.workspace && (

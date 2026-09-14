@@ -9,11 +9,14 @@ export function SnapshotForm({
   initial,
   onSave,
   onCancel,
+  busy = false,
 }: {
   locale: Locale;
   initial?: BusinessSnapshot;
   onSave: (snapshot: BusinessSnapshot) => void;
   onCancel: () => void;
+  /** True while the server runs the analysis, so the form cannot be double-submitted. */
+  busy?: boolean;
 }) {
   const t = getDictionary(locale).dash;
   const [charges, setCharges] = useState(
@@ -164,7 +167,7 @@ export function SnapshotForm({
         >
           {t.cancel}
         </button>
-        <button className="button button-primary" type="submit">
+        <button className="button button-primary" type="submit" disabled={busy}>
           <Sparkles size={17} />
           {t.save}
         </button>

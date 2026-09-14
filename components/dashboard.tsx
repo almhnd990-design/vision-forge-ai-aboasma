@@ -62,10 +62,68 @@ const navIcons = [
   Activity,
 ];
 const providers = ["Shopify", "Stripe", "Amazon", "Gmail"];
+
+/**
+ * A finding as the server returns it.
+ *
+ * `evidence` is the deterministic record and is always present. The `ai` block is separate on
+ * purpose: a missing block means reasoning did not run, and the UI must say so rather than
+ * rendering empty text that looks like analysis.
+ */
+type ServerFinding = {
+  id: string;
+  kind: "recovery" | "growth" | "operations" | "risk";
+  severity: "low" | "medium" | "high" | "critical";
+  confidence: number;
+  title: string;
+  summary: string;
+  recommendedAction: string | null;
+  estimatedImpactCents: number | null;
+  requiresApproval: boolean;
+  evidence: string[];
+  status: string;
+  ai: {
+    priorityRank: number | null;
+    explanation: string;
+    nextSteps: string[];
+    missingInformation: string[];
+    provider: string | null;
+    model: string | null;
+  } | null;
+};
+
+/** Convert a persisted finding into the shape the dashboard already renders. */
+function findingToInsight(finding: ServerFinding): AgentInsight {
+  return {
+    id: finding.id,
+    kind: finding.kind,
+    severity: finding.severity,
+    title: finding.title,
+    summary: finding.summary,
+    confidence: finding.confidence,
+    estimatedImpactCents: finding.estimatedImpactCents ?? undefined,
+    evidence: finding.evidence,
+    recommendedAction: finding.recommendedAction ?? "",
+    requiresApproval: finding.requiresApproval,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 export type CloudState = {
   configured: boolean;
   signedIn: boolean;
   email: string | null;
+  /** Present only when the deployment has accounts and the user owns a workspace. */
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  /** Quota state so the UI can explain *why* an action is unavailable, not just hide it. */
+  plan?: {
+    planId: string | null;
+    billingStatus: string;
+    analysesUsed: number;
+    analysesLimit: number | null;
+    blockedReason: string | null;
+  } | null;
 };
 export function Dashboard({
   locale,
@@ -75,6 +133,7 @@ export function Dashboard({
   cloud: CloudState;
 }) {
   const t = getDictionary(locale).dash;
+  const cloudMode = Boolean(cloud.workspaceId);
   const [section, setSection] = useState<Section>("overview");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -86,8 +145,46 @@ export function Dashboard({
   const [mobile, setMobile] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  /** Findings persisted on the server, used instead of the local engine when signed in. */
+  const [serverFindings, setServerFindings] = useState<AgentInsight[]>([]);
+  const [serverReviewed, setServerReviewed] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
+
+  /**
+   * Load persisted findings when the account has a cloud workspace.
+   *
+   * This is the whole point of the migration away from localStorage: the same workspace must
+   * open on another device with the same findings and review history.
+   */
+  useEffect(() => {
+    if (!cloudMode || !cloud.workspaceId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(`/api/workspace/snapshot?workspaceId=${cloud.workspaceId}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          findings?: ServerFinding[];
+          reviewed?: string[];
+        };
+        if (cancelled) return;
+        setServerFindings((payload.findings ?? []).map(findingToInsight));
+        setServerReviewed(payload.reviewed ?? []);
+      } catch {
+        /* A read failure must not blank the dashboard; the empty state explains itself. */
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudMode, cloud.workspaceId]);
+
   useEffect(() => {
     if (!mobile) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -155,17 +252,26 @@ export function Dashboard({
     const timer = setTimeout(() => setNotice(""), 6000);
     return () => clearTimeout(timer);
   }, [notice]);
-  const insights = useMemo(
-    () =>
-      workspace
-        ? insightsFor(workspace.snapshot).map((insight) => ({
-            ...insight,
-            createdAt: workspace.ranAt,
-          }))
-        : [],
-    [workspace],
-  );
-  const open = insights.filter((i) => !workspace?.reviewed.includes(i.id));
+  /**
+   * Which findings are shown.
+   *
+   * In cloud mode the server is the source of truth (they are persisted, auditable and shared
+   * across devices). Locally the deterministic engine runs in the browser as before, so the
+   * product still works on a deployment with no accounts.
+   */
+  const insights = useMemo(() => {
+    if (cloudMode) return serverFindings;
+    return workspace
+      ? insightsFor(workspace.snapshot).map((insight) => ({
+          ...insight,
+          createdAt: workspace.ranAt,
+        }))
+      : [];
+  }, [cloudMode, serverFindings, workspace]);
+
+  /** Review state, from wherever it actually lives. */
+  const reviewedIds = cloudMode ? serverReviewed : (workspace?.reviewed ?? []);
+  const open = insights.filter((i) => !reviewedIds.includes(i.id));
   const format = (cents: number) => moneyFormat(cents, locale);
   const date = (at: string) =>
     new Intl.DateTimeFormat(locale === "ar" ? "ar-SA" : "en-GB", {
@@ -175,6 +281,9 @@ export function Dashboard({
     }).format(new Date(at));
   function persist(next: Workspace | null) {
     setWorkspace(next);
+    // In cloud mode the account workspace is the store; the browser copy would be a
+    // divergent second source of truth, so it is deliberately not written.
+    if (cloudMode) return;
     try {
       if (next) localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       else localStorage.removeItem(STORAGE_KEY);
@@ -190,8 +299,61 @@ export function Dashboard({
     setFilter("all");
     window.history.replaceState(null, "", `#${value}`);
   }
-  function save(snapshot: BusinessSnapshot, imported = false) {
+  async function save(snapshot: BusinessSnapshot, imported = false) {
     const at = new Date().toISOString();
+
+    /**
+     * Cloud mode: the analysis runs on the SERVER.
+     *
+     * This is the architectural point of the commercial build — the browser cannot compute,
+     * skip or tamper with an analysis, and plan limits are enforced where the customer cannot
+     * reach them. The local engine remains the fallback when no account exists.
+     */
+    if (cloudMode && cloud.workspaceId) {
+      setBusy(true);
+      try {
+        const response = await fetch("/api/analysis/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            workspaceId: cloud.workspaceId,
+            locale,
+            withAi: true,
+            snapshot,
+          }),
+        });
+        const payload = (await response.json()) as {
+          findings?: ServerFinding[];
+          ai?: { available: boolean; reason?: string };
+          usage?: { used: number; limit: number | null };
+          error?: { code: string; message: string };
+        };
+
+        if (!response.ok) {
+          setNotice(payload.error?.message ?? t.storageError);
+          return;
+        }
+
+        setServerFindings((payload.findings ?? []).map(findingToInsight));
+        setServerReviewed([]);
+        setEditing(false);
+        setSelected(null);
+        go("overview");
+
+        const aiNote = payload.ai?.available ? "" : ` ${payload.ai?.reason ?? ""}`.trim();
+        const usage =
+          payload.usage?.limit === null || payload.usage?.limit === undefined
+            ? ""
+            : ` (${payload.usage.used}/${payload.usage.limit})`;
+        setNotice(`${imported ? t.imported : t.saved}${usage}${aiNote ? ` — ${aiNote}` : ""}`);
+      } catch {
+        setNotice(t.storageError);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     persist({
       snapshot,
       reviewed: [],
@@ -213,16 +375,60 @@ export function Dashboard({
       const data = JSON.parse(await file.text());
       const parsed = snapshotSchema.safeParse(data.snapshot ?? data);
       if (!parsed.success) throw Error("schema");
-      save(parsed.data, true);
+      await save(parsed.data, true);
     } catch {
       setNotice(t.importError);
     } finally {
       if (fileRef.current) fileRef.current.value = "";
     }
   }
-  function toggleReview(insight: AgentInsight) {
+  /**
+   * Record a review decision.
+   *
+   * Cloud mode posts to the server so the approval state machine and its audit trail are
+   * authoritative, and the decision survives a device change. Local mode keeps the original
+   * browser-only behaviour.
+   */
+  async function toggleReview(insight: AgentInsight) {
+    const exists = reviewedIds.includes(insight.id);
+
+    if (cloudMode && cloud.workspaceId) {
+      setBusy(true);
+      try {
+        const response = await fetch("/api/findings/decide", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            workspaceId: cloud.workspaceId,
+            findingId: insight.id,
+            decision: exists ? "reopened" : "reviewed",
+          }),
+        });
+        const payload = (await response.json()) as {
+          status?: string;
+          executed?: boolean;
+          executionNote?: string;
+          error?: { message: string };
+        };
+        if (!response.ok) {
+          setNotice(payload.error?.message ?? t.storageError);
+          return;
+        }
+        setServerReviewed((previous) =>
+          exists ? previous.filter((id) => id !== insight.id) : [...previous, insight.id],
+        );
+        setSelected(null);
+        // The API reports honestly whether anything was executed. It never is, today.
+        setNotice(payload.executionNote ?? t[exists ? "reopened" : "reviewEvent"]);
+      } catch {
+        setNotice(t.storageError);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     if (!workspace) return;
-    const exists = workspace.reviewed.includes(insight.id);
     const type: ActivityType = exists ? "reopened" : "reviewEvent";
     persist({
       ...workspace,
@@ -291,7 +497,7 @@ export function Dashboard({
   function insightCard(insight: AgentInsight) {
     if (!workspace) return null;
     const text = displayInsight(insight, workspace.snapshot, t, locale);
-    const checked = workspace.reviewed.includes(insight.id);
+    const checked = reviewedIds.includes(insight.id);
     return (
       <button
         className="insight-card"
@@ -805,8 +1011,9 @@ export function Dashboard({
           <SnapshotForm
             locale={locale}
             initial={workspace?.snapshot}
-            onSave={save}
+            onSave={(snapshot) => void save(snapshot)}
             onCancel={() => setEditing(false)}
+            busy={busy}
           />
           <div className="import-tip">
             <FileJson size={17} />
@@ -855,7 +1062,7 @@ export function Dashboard({
               onClick={() => toggleReview(selected)}
             >
               <Check size={17} />
-              {workspace?.reviewed.includes(selected.id) ? t.unmark : t.mark}
+              {reviewedIds.includes(selected.id) ? t.unmark : t.mark}
             </button>
           </div>
         </Modal>

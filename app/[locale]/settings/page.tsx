@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/access";
 import { billingEnvStatus } from "@/lib/billing/stripe";
 import { listConnectionViews } from "@/lib/connectors/service";
+import { FEATURES } from "@/lib/plans";
 
 export const metadata: Metadata = {
   title: "Account settings",
@@ -111,6 +112,12 @@ export default async function SettingsPage({
     billingConfigured: billing.configured,
     missingBillingEnv: billing.configured ? [] : missingEnv(BILLING_ENV_KEYS),
     authConfigured,
+    /*
+     * Derived from the feature registry rather than hard-coded, so flipping
+     * `scheduled_scans.availability` to "live" in lib/plans.ts is the ONLY change needed to
+     * activate the control once a real scheduler exists.
+     */
+    scheduledScansAvailable: FEATURES.scheduled_scans.availability !== "planned",
   };
 
   return (

@@ -34,6 +34,7 @@ import {
   describeAuthError,
 } from "../lib/auth/client.ts";
 import { LEGAL_DOC_KEYS, getLegalDoc } from "../lib/legal/content.ts";
+import { cadenceToMs, nextRunFrom } from "../lib/agent/schedule.ts";
 import { runDeterministicEngine, engineSignature, stableInsightId } from "../lib/agent/engine.ts";
 import { canTransition, ALLOWED_TRANSITIONS } from "../lib/agent/service.ts";
 import { validateAiOutput, resolveProvider, AI_UNAVAILABLE } from "../lib/ai/reason.ts";
@@ -517,6 +518,27 @@ check(
     allLegalText.includes("no independent penetration test") ||
     allLegalText.includes("not claim"),
   "legal pages disclose that controls and audits are not certified",
+);
+
+// ---------------------------------------------------------------------------
+// 13. Scan schedule arithmetic
+// ---------------------------------------------------------------------------
+
+check(cadenceToMs("daily") === 86_400_000, "a daily schedule is 24 hours");
+check(cadenceToMs("weekly") === 604_800_000, "a weekly schedule is 7 days");
+
+const scheduleAnchor = new Date("2026-01-01T00:00:00.000Z");
+check(
+  nextRunFrom("daily", scheduleAnchor) === "2026-01-02T00:00:00.000Z",
+  "a daily job's next run is exactly 24 hours later",
+);
+check(
+  nextRunFrom("weekly", scheduleAnchor) === "2026-01-08T00:00:00.000Z",
+  "a weekly job's next run is exactly 7 days later",
+);
+check(
+  Date.parse(nextRunFrom("daily", scheduleAnchor)) > scheduleAnchor.getTime(),
+  "the next run is always in the future (a failing job cannot be retried every minute)",
 );
 
 const featureKeys = new Set(Object.keys(FEATURES));

@@ -438,6 +438,59 @@ await withServer(async (base) => {
       "/en/dashboard: links to account settings and provider connections",
     );
   }
+
+  // ---- workspace + scheduler endpoints refuse anonymous callers --------------------
+  {
+    const cases = [
+      ["/api/workspace/snapshot", "GET"],
+      ["/api/workspace/scan-schedule", "GET"],
+      ["/api/cron/scan", "POST"],
+    ];
+    for (const [path, method] of cases) {
+      const response = await fetch(base + path, { method });
+      const payload = await response.json().catch(() => ({}));
+      check(
+        response.status === 401 || response.status === 503,
+        `${method} ${path}: refused without credentials (${response.status}, ${payload?.error?.code ?? "no code"})`,
+      );
+      check(
+        !("findings" in payload) && !("workspace" in payload) && !("outcomes" in payload),
+        `${method} ${path}: returns no workspace data to an anonymous caller`,
+      );
+    }
+  }
+
+  // ---- the scheduler never runs unauthenticated and never invents work -------------
+  {
+    const withBadSecret = await fetch(base + "/api/cron/scan", {
+      method: "POST",
+      headers: { authorization: "Bearer not-the-real-secret" },
+    });
+    check(
+      [401, 503].includes(withBadSecret.status),
+      `POST /api/cron/scan: a wrong secret is refused (${withBadSecret.status})`,
+    );
+    const payload = await withBadSecret.json().catch(() => ({}));
+    check(
+      payload?.ran === undefined,
+      "POST /api/cron/scan: no scan summary is returned for an unauthorised caller",
+    );
+  }
+
+  // ---- the scan-schedule endpoint validates before it acts -------------------------
+  {
+    const response = await fetch(base + "/api/workspace/scan-schedule", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId: "not-a-uuid", enabled: true }),
+    });
+    check(
+      response.status === 400 || response.status === 401 || response.status === 503,
+      `POST /api/workspace/scan-schedule: rejects a malformed request (${response.status})`,
+    );
+    const payload = await response.json().catch(() => ({}));
+    check(payload?.ok !== true, "POST /api/workspace/scan-schedule: no success is reported");
+  }
 });
 
 console.log(`\n${checks} commercial HTTP checks passed.`);
